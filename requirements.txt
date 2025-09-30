@@ -1,5 +1,1 @@
-streamlit
-pandas
-plotly
-yfinance
-openpyxl
+pip install streamlit yfinance pandas plotly ta
