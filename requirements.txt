@@ -1,8 +1,7 @@
 streamlit
 yfinance
-plotly
 pandas
 numpy
+plotly
+kaleido
 openpyxl
-matplotlib
-ta
