@@ -1,27 +1,3 @@
-"""
-Stock Market Visualizer - Streamlit app
-Features:
-- Fetch data with yfinance
-- Interactive candlestick charts with overlays (MA, RSI, Bollinger Bands) using Plotly
-- Portfolio tracking (CSV/Excel upload)
-- Financial ratios (from yfinance .info fallback)
-- Stock correlation analysis
-- Customizable visualizations (timeframes, thresholds, colors)
-- Export charts as PNG/HTML
-- Save and load user configurations (JSON)
-
-Usage: `streamlit run streamlit_app.py`
-
-Requirements in requirements.txt (see README):
-streamlit
-yfinance
-pandas
-numpy
-plotly
-kaleido
-openpyxl
-
-"""
 
 import streamlit as st
 import yfinance as yf
