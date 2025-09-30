@@ -1,7 +1,23 @@
-streamlit
-yfinance
-pandas
-numpy
-plotly
-kaleido
-openpyxl
+# stock_data_app.py
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+
+@st.cache_data(ttl=3600)
+def fetch_data(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    """Fetch stock data from yfinance"""
+    t = yf.Ticker(ticker)
+    df = t.history(period=period, interval=interval, auto_adjust=False)
+    df.index = pd.to_datetime(df.index)
+    return df
+
+st.title("📈 Stock Market Visualizer")
+
+ticker = st.text_input("Enter Stock Ticker (e.g. AAPL, TSLA, INFY.NS)", "AAPL")
+period = st.selectbox("Select Period", ["1mo","3mo","6mo","1y","2y","5y","max"], index=3)
+interval = st.selectbox("Interval", ["1d","1wk","1mo"], index=0)
+
+if st.button("Fetch Data"):
+    data = fetch_data(ticker, period, interval)
+    st.session_state["data"] = data
+    st.write("Latest Data:", data.tail())
