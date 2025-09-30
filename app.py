@@ -1,120 +1,182 @@
-# stock_visualizer_extended.py
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
+import ta
 import json
+import io
 
-# ---------------- Helper Functions ----------------
-def sma(series, window): return series.rolling(window).mean()
-def ema(series, window): return series.ewm(span=window, adjust=False).mean()
+# ----------------------
+# Sidebar – App Settings
+# ----------------------
+st.set_page_config(page_title="Stock Market Visualizer", layout="wide")
+st.title("📈 Stock Market Visualizer")
 
-def bollinger_bands(series, window=20, n_std=2):
-    ma = series.rolling(window).mean()
-    std = series.rolling(window).std()
-    return ma, ma + n_std*std, ma - n_std*std
+with st.sidebar:
+    st.header("Stock Selection & Settings")
+    symbol = st.text_input("Enter stock ticker (e.g., AAPL)", value="AAPL").upper()
+    start_date = st.date_input("Start Date", pd.to_datetime("2020-01-01"))
+    end_date = st.date_input("End Date", pd.to_datetime("today"))
+    show_ma = st.checkbox("Show Moving Averages", value=True)
+    show_rsi = st.checkbox("Show RSI", value=False)
+    show_bollinger = st.checkbox("Show Bollinger Bands", value=False)
 
-def rsi(series, window=14):
-    delta = series.diff()
-    up, down = delta.clip(lower=0), -delta.clip(upper=0)
-    ma_up, ma_down = up.ewm(alpha=1/window, adjust=False).mean(), down.ewm(alpha=1/window, adjust=False).mean()
-    rs = ma_up / ma_down
-    return 100 - (100/(1+rs))
+    st.markdown("---")
+    st.subheader("Chart Customization")
+    ma1 = st.slider("MA Short Window", 5, 50, 20)
+    ma2 = st.slider("MA Long Window", 10, 200, 50)
 
-# ---------------- Charts ----------------
-def plot_candlestick(df, ticker, sma_list=None, ema_list=None, boll=False):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close'], name=ticker
-    ))
-    if sma_list:
-        for w in sma_list:
-            fig.add_trace(go.Scatter(x=df.index, y=sma(df['Close'], w), mode='lines', name=f"SMA {w}"))
-    if ema_list:
-        for w in ema_list:
-            fig.add_trace(go.Scatter(x=df.index, y=ema(df['Close'], w), mode='lines', name=f"EMA {w}"))
-    if boll:
-        ma, upper, lower = bollinger_bands(df['Close'])
-        fig.add_trace(go.Scatter(x=df.index, y=upper, line=dict(dash="dot"), name="BB Upper"))
-        fig.add_trace(go.Scatter(x=df.index, y=lower, line=dict(dash="dot"), name="BB Lower"))
-    fig.update_layout(title=f"{ticker} Candlestick", xaxis_rangeslider_visible=False)
-    return fig
+    st.markdown("---")
+    st.subheader("Export & Save")
+    export_format = st.selectbox("Export chart as", ["None", "PNG", "HTML"])
+    if st.button("Save Configuration"):
+        config = {
+            "symbol": symbol,
+            "start": str(start_date),
+            "end": str(end_date),
+            "ma1": ma1,
+            "ma2": ma2,
+            "show_ma": show_ma,
+            "show_rsi": show_rsi,
+            "show_bollinger": show_bollinger
+        }
+        config_str = json.dumps(config)
+        st.download_button("Download Config JSON", config_str, file_name="stock_config.json")
 
-def plot_rsi(df):
-    r = rsi(df['Close'])
-    fig = go.Figure([go.Scatter(x=r.index, y=r, name="RSI")])
-    fig.add_hline(y=70, line_dash="dash")
-    fig.add_hline(y=30, line_dash="dash")
-    return fig
+# ----------------------
+# Load Stock Data
+# ----------------------
+@st.cache_data
+def load_data(symbol, start, end):
+    data = yf.download(symbol, start=start, end=end)
+    data.dropna(inplace=True)
+    return data
 
-# ---------------- Streamlit App ----------------
-st.title("📊 Stock Market Visualizer - Advanced")
+df = load_data(symbol, start_date, end_date)
 
-if "data" not in st.session_state:
-    st.warning("⚠️ First run stock_data_app.py to fetch and save data into session_state.")
-else:
-    df = st.session_state["data"]
-    ticker = st.text_input("Ticker for Chart", "AAPL")
+if df.empty:
+    st.error("No data found. Please check the ticker or date range.")
+    st.stop()
 
-    # Candlestick
-    sma_list = st.multiselect("SMA", [10,20,50])
-    ema_list = st.multiselect("EMA", [10,20,50])
-    boll = st.checkbox("Show Bollinger Bands")
-    st.plotly_chart(plot_candlestick(df, ticker, sma_list, ema_list, boll))
+# ----------------------
+# Technical Indicators
+# ----------------------
+if show_ma:
+    df[f"MA{ma1}"] = df['Close'].rolling(window=ma1).mean()
+    df[f"MA{ma2}"] = df['Close'].rolling(window=ma2).mean()
 
-    # RSI
-    if st.checkbox("Show RSI"):
-        st.plotly_chart(plot_rsi(df))
+if show_bollinger:
+    bb = ta.volatility.BollingerBands(df['Close'])
+    df['bb_high'] = bb.bollinger_hband()
+    df['bb_low'] = bb.bollinger_lband()
 
-    # Portfolio Tracking
-    st.header("📂 Portfolio Tracker")
-    file = st.file_uploader("Upload Portfolio CSV/Excel", type=["csv","xlsx"])
-    if file:
-        portfolio = pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
-        st.write(portfolio)
+if show_rsi:
+    df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
 
-    # Ratios
-    st.header("📑 Financial Ratios")
-    if st.button("Get Ratios"):
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        st.write({
-            "Market Cap": info.get("marketCap"),
-            "P/E": info.get("trailingPE"),
-            "P/B": info.get("priceToBook"),
-        })
+# ----------------------
+# Plotly Candlestick Chart
+# ----------------------
+fig = go.Figure()
 
-    # Correlation
-    st.header("🔗 Correlation Analysis")
-    tickers = st.text_input("Enter tickers (comma separated)", "AAPL,MSFT,GOOG").split(",")
-    if st.button("Show Correlation"):
-        prices = pd.DataFrame()
-        for t in tickers:
-            prices[t.strip()] = yf.download(t.strip(), period="1y")["Close"]
-        corr = prices.corr()
-        fig = px.imshow(corr, text_auto=True, title="Correlation Heatmap")
-        st.plotly_chart(fig)
+fig.add_trace(go.Candlestick(
+    x=df.index,
+    open=df['Open'], high=df['High'],
+    low=df['Low'], close=df['Close'],
+    name="Candlestick"
+))
 
-    # Export
-    st.header("📥 Export Charts")
-    chart = plot_candlestick(df, ticker)
-    png = chart.to_image(format="png")
-    html = chart.to_html()
-    st.download_button("Download PNG", data=png, file_name="chart.png")
-    st.download_button("Download HTML", data=html, file_name="chart.html")
+if show_ma:
+    fig.add_trace(go.Scatter(x=df.index, y=df[f"MA{ma1}"], mode='lines', name=f"MA{ma1}"))
+    fig.add_trace(go.Scatter(x=df.index, y=df[f"MA{ma2}"], mode='lines', name=f"MA{ma2}"))
 
-    # Config Save/Load
-    st.header("⚙️ Configurations")
-    config = {"sma": sma_list, "ema": ema_list, "bollinger": boll}
-    if st.button("Save Config"):
-        with open("config.json","w") as f: json.dump(config,f)
-        st.success("Config saved")
-    if st.button("Load Config"):
+if show_bollinger:
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb_high'], line=dict(dash='dot'), name="Bollinger High"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb_low'], line=dict(dash='dot'), name="Bollinger Low"))
+
+fig.update_layout(title=f"{symbol} Stock Price", xaxis_rangeslider_visible=False)
+
+# ----------------------
+# Display Chart
+# ----------------------
+st.plotly_chart(fig, use_container_width=True)
+
+# ----------------------
+# RSI Chart (Optional)
+# ----------------------
+if show_rsi:
+    fig_rsi = go.Figure()
+    fig_rsi.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI', line=dict(color='orange')))
+    fig_rsi.update_layout(title="RSI Indicator", yaxis=dict(range=[0, 100]), height=300)
+    st.plotly_chart(fig_rsi, use_container_width=True)
+
+# ----------------------
+# Export Chart
+# ----------------------
+if export_format == "PNG":
+    fig.write_image("chart.png")
+    with open("chart.png", "rb") as f:
+        st.download_button("Download PNG", f, file_name="chart.png")
+elif export_format == "HTML":
+    html_bytes = fig.to_html(full_html=False).encode("utf-8")
+    st.download_button("Download HTML", html_bytes, file_name="chart.html")
+
+# ----------------------
+# Portfolio Tracking
+# ----------------------
+st.markdown("## 📊 Portfolio Tracker")
+portfolio_file = st.file_uploader("Upload Portfolio CSV (columns: Symbol, Shares)", type=["csv", "xlsx"])
+
+if portfolio_file:
+    try:
+        if portfolio_file.name.endswith(".csv"):
+            portfolio_df = pd.read_csv(portfolio_file)
+        else:
+            portfolio_df = pd.read_excel(portfolio_file)
+
+        if not {"Symbol", "Shares"}.issubset(portfolio_df.columns):
+            st.error("CSV must contain 'Symbol' and 'Shares' columns.")
+        else:
+            portfolio_df['Symbol'] = portfolio_df['Symbol'].str.upper()
+            prices = []
+            for s in portfolio_df['Symbol']:
+                try:
+                    data = yf.Ticker(s).history(period="1d")
+                    prices.append(data['Close'][-1])
+                except:
+                    prices.append(0)
+            portfolio_df['Price'] = prices
+            portfolio_df['Value'] = portfolio_df['Price'] * portfolio_df['Shares']
+            total = portfolio_df['Value'].sum()
+            st.dataframe(portfolio_df)
+            st.metric("Total Portfolio Value", f"${total:,.2f}")
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+
+# ----------------------
+# Correlation Matrix
+# ----------------------
+st.markdown("## 🔗 Correlation Matrix")
+symbols_input = st.text_input("Enter comma-separated tickers (e.g., AAPL,MSFT,GOOGL)", value="AAPL,MSFT,GOOGL")
+tickers = [t.strip().upper() for t in symbols_input.split(",")]
+
+if len(tickers) >= 2:
+    correlation_data = {}
+    for t in tickers:
         try:
-            config = json.load(open("config.json"))
-            st.write(config)
+            hist = yf.download(t, start=start_date, end=end_date)['Close']
+            correlation_data[t] = hist
         except:
-            st.error("No config found")
+            continue
+    if correlation_data:
+        corr_df = pd.DataFrame(correlation_data).dropna().corr()
+        st.dataframe(corr_df)
+        st.plotly_chart(go.Figure(data=go.Heatmap(z=corr_df.values,
+                                                  x=corr_df.columns,
+                                                  y=corr_df.index,
+                                                  colorscale="Viridis")), use_container_width=True)
+
+# ----------------------
+# Footer
+# ----------------------
+st.markdown("---")
+st.caption("Built with ❤️ using Streamlit, Plotly, and yFinance")
